@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED = [
     "bot.py",
     "requirements.txt",
+    "runtime.txt",
     ".env.example",
     ".gitignore",
     "sv13bot/__init__.py",
