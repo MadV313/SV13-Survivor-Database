@@ -1,4 +1,4 @@
-# SV13 Survivor Database Bot v0.1.1
+# SV13 Survivor Database Bot v0.1.2
 
 Discord bot for the **SV13 Project Intelligence v0.7 knowledge package**.
 
@@ -120,3 +120,13 @@ This checks required files, Python syntax, cache artifacts and obvious committed
 `WEB_BASE_URL` is reserved for the web field manual.
 
 Discord and the website should both consume the same versioned SV13 knowledge package so Unity remains the single source of truth.
+
+
+## Railway build pin
+
+`runtime.txt` pins Python 3.13.15 and `requirements.txt` pins exact dependency
+versions so the first Railway deployment is deterministic.
+
+Railway still requires a reachable knowledge source before the bot can start:
+prefer `SV13_KNOWLEDGE_BASE_URL` pointing at the hosted
+`SV13_Knowledge/Latest` package.
