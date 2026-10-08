@@ -78,38 +78,126 @@ class KnowledgeStore:
                 f"manifest.json was not found in SV13_KNOWLEDGE_DIR: {self.knowledge_dir}"
             )
 
+    \
     def load(self) -> None:
         self.validate_path()
 
-        self.manifest = self._read_json("manifest.json")
-        self.items = self._read_json(DATA_FILES["items"])
-        self.recipes = self._read_json(DATA_FILES["recipes"])
-        self.categories = self._read_json(DATA_FILES["categories"])
-        self.buildables = self._read_json(DATA_FILES["buildables"])
-        self.build_materials = self._read_json(DATA_FILES["build_materials"])
-        self.crops = self._read_json(DATA_FILES["crops"])
-        self.fishing = self._read_json(DATA_FILES["fishing"])
-        self.documents = self._read_json(DATA_FILES["documents"])
-        self.levels = self._read_json(DATA_FILES["levels"])
-        self.loot_tables = self._read_json(DATA_FILES["loot_tables"])
-        self.validation = self._read_json(DATA_FILES["validation"])
+        manifest = self._read_json("manifest.json")
+        if not isinstance(manifest, dict):
+            raise RuntimeError("manifest.json must contain a JSON object.")
 
-        self._file_hashes = {
+        self._verify_manifest_files(manifest)
+
+        items = self._read_json(DATA_FILES["items"])
+        recipes = self._read_json(DATA_FILES["recipes"])
+        categories = self._read_json(DATA_FILES["categories"])
+        buildables = self._read_json(DATA_FILES["buildables"])
+        build_materials = self._read_json(DATA_FILES["build_materials"])
+        crops = self._read_json(DATA_FILES["crops"])
+        fishing = self._read_json(DATA_FILES["fishing"])
+        documents = self._read_json(DATA_FILES["documents"])
+        levels = self._read_json(DATA_FILES["levels"])
+        loot_tables = self._read_json(DATA_FILES["loot_tables"])
+        validation = self._read_json(DATA_FILES["validation"])
+
+        for label, value in (
+            ("items", items),
+            ("recipes", recipes),
+            ("categories", categories),
+            ("buildables", buildables),
+            ("build_materials", build_materials),
+            ("crops", crops),
+            ("documents", documents),
+            ("levels", levels),
+            ("loot_tables", loot_tables),
+            ("validation", validation),
+        ):
+            if not isinstance(value, list):
+                raise RuntimeError(f"{DATA_FILES[label]} must contain a JSON array.")
+
+        if not isinstance(fishing, dict):
+            raise RuntimeError("fishing.json must contain a JSON object.")
+        if not isinstance(fishing.get("baits", []), list) or not isinstance(
+            fishing.get("loot", []), list
+        ):
+            raise RuntimeError("fishing.json must contain baits[] and loot[] arrays.")
+
+        file_hashes = {
             str(entry.get("fileName", "")): str(entry.get("sha256", ""))
-            for entry in self.manifest.get("files", [])
-            if entry.get("fileName")
+            for entry in manifest.get("files", [])
+            if isinstance(entry, dict) and entry.get("fileName")
         }
 
         raw = json.dumps(
             {
-                "package": self.package_version,
-                "files": sorted(self._file_hashes.items()),
+                "package": str(manifest.get("packageVersion", "")),
+                "files": sorted(file_hashes.items()),
             },
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
-        self._manifest_fingerprint = hashlib.sha256(raw).hexdigest()
+        manifest_fingerprint = hashlib.sha256(raw).hexdigest()
+
+        # Assign only after the entire package has parsed and validated.
+        self.manifest = manifest
+        self.items = items
+        self.recipes = recipes
+        self.categories = categories
+        self.buildables = buildables
+        self.build_materials = build_materials
+        self.crops = crops
+        self.fishing = fishing
+        self.documents = documents
+        self.levels = levels
+        self.loot_tables = loot_tables
+        self.validation = validation
+        self._file_hashes = file_hashes
+        self._manifest_fingerprint = manifest_fingerprint
         self._rebuild_indexes()
+
+    def _verify_manifest_files(self, manifest: Dict[str, Any]) -> None:
+        entries = manifest.get("files") or []
+        if not isinstance(entries, list):
+            raise RuntimeError("manifest.json files must be an array.")
+
+        entry_map = {
+            str(entry.get("fileName", "")): entry
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("fileName")
+        }
+
+        required = set(DATA_FILES.values())
+        missing_manifest_entries = sorted(required - set(entry_map))
+        if missing_manifest_entries:
+            raise RuntimeError(
+                "manifest.json is missing required data entries: "
+                + ", ".join(missing_manifest_entries)
+            )
+
+        for name, entry in entry_map.items():
+            path = self.knowledge_dir / name
+            if not path.is_file():
+                raise FileNotFoundError(
+                    f"Knowledge package file listed by manifest is missing: {path}"
+                )
+
+            expected_bytes = entry.get("bytes")
+            if isinstance(expected_bytes, int) and expected_bytes >= 0:
+                actual_bytes = path.stat().st_size
+                if actual_bytes != expected_bytes:
+                    raise RuntimeError(
+                        f"Knowledge byte-count mismatch for {name}: "
+                        f"expected {expected_bytes}, got {actual_bytes}"
+                    )
+
+            expected_hash = str(entry.get("sha256", "")).strip().lower()
+            if expected_hash:
+                actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+                if actual_hash != expected_hash:
+                    raise RuntimeError(
+                        f"Knowledge hash mismatch for {name}: "
+                        f"expected {expected_hash}, got {actual_hash}"
+                    )
 
     def reload_if_changed(self, force: bool = False) -> tuple[bool, List[str]]:
         self.validate_path()

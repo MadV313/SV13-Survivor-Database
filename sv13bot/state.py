@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class StateStore:
@@ -13,12 +13,15 @@ class StateStore:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.path))
+        conn = sqlite3.connect(str(self.path), timeout=10.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("PRAGMA foreign_keys=ON")
         return conn
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS guild_channels (
@@ -97,6 +100,21 @@ class StateStore:
                 (guild_id, entity_key),
             ).fetchone()
         return dict(row) if row else None
+
+    def list_published(self, guild_id: int) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM published_entities WHERE guild_id=? ORDER BY entity_type, entity_key",
+                (guild_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def delete_published(self, guild_id: int, entity_key: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM published_entities WHERE guild_id=? AND entity_key=?",
+                (guild_id, entity_key),
+            )
 
     def upsert_published(
         self,

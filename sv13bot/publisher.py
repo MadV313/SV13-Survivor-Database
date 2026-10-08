@@ -115,6 +115,7 @@ class KnowledgePublisher:
             "updated": updated,
             "unchanged": unchanged,
             "skipped": skipped,
+            "changed": created + updated,
         }
 
     async def _update_existing(
