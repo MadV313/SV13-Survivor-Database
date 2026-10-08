@@ -102,8 +102,18 @@ class KnowledgeSource:
                 if not isinstance(entry, dict):
                     raise RuntimeError("Remote manifest contains a malformed file entry.")
                 name = str(entry.get("fileName", "")).strip()
-                if not name or "/" in name or "\\" in name:
-                    raise RuntimeError(f"Unsafe or empty fileName in manifest: {name!r}")
+                candidate = Path(name)
+                if (
+                    not name
+                    or name in {".", ".."}
+                    or candidate.is_absolute()
+                    or candidate.name != name
+                    or "/" in name
+                    or "\\" in name
+                ):
+                    raise RuntimeError(
+                        f"Unsafe or empty fileName in manifest: {name!r}"
+                    )
 
                 payload = self._download_bytes(name)
                 expected_hash = str(entry.get("sha256", "")).strip().lower()

@@ -78,7 +78,6 @@ class KnowledgeStore:
                 f"manifest.json was not found in SV13_KNOWLEDGE_DIR: {self.knowledge_dir}"
             )
 
-    \
     def load(self) -> None:
         self.validate_path()
 
@@ -202,10 +201,14 @@ class KnowledgeStore:
     def reload_if_changed(self, force: bool = False) -> tuple[bool, List[str]]:
         self.validate_path()
         manifest = self._read_json("manifest.json")
+        entries = manifest.get("files") or []
+        if not isinstance(entries, list):
+            raise RuntimeError("manifest.json files must be an array.")
+
         next_hashes = {
             str(entry.get("fileName", "")): str(entry.get("sha256", ""))
-            for entry in manifest.get("files", [])
-            if entry.get("fileName")
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("fileName")
         }
         raw = json.dumps(
             {
