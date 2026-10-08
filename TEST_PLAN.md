@@ -1,8 +1,14 @@
-# SV13 Bot v0.1.0 Test Plan
+# SV13 Bot v0.1.1 Test Plan
 
-## A. Local knowledge test — no Discord token needed
+## A. Repository preflight
 
-After `install_windows.bat`:
+```bat
+.venv\Scripts\python.exe tools\repo_audit.py
+```
+
+Expected: `PASS`.
+
+## B. Local knowledge test — no Discord token needed
 
 ```bat
 .venv\Scripts\python.exe tools\smoke_test.py --knowledge "C:\Path\To\Project\SV13_Knowledge\Latest"
@@ -10,24 +16,30 @@ After `install_windows.bat`:
 
 Expected:
 
+- manifest/file integrity PASS
 - package version printed
 - item search PASS
 - recipe search PASS
 - building search PASS
 - crop search PASS
 - document search PASS
-- final line: `Knowledge loader/search smoke test PASSED.`
+- final loader/search PASS
 
-## B. Discord startup
+## C. Discord startup
 
-1. Put token, server ID and knowledge path in `.env`.
+1. Put the token, server ID and local/remote knowledge source in `.env`.
 2. Run `run_bot.bat`.
-3. Console should report the bot logged in and slash commands synced.
+3. Console should report login, package version, guild count, knowledge source and state DB path.
 4. Run `/sv13status`.
 
-## C. Query checks
+## D. Structure / repair
 
-Test:
+1. `/sv13setup`
+2. Confirm the category, two text channels and four forums exist.
+3. Run `/sv13setup` again.
+4. Confirm it repairs/reuses the existing structure rather than creating duplicates.
+
+## E. Query checks
 
 - `/search cabbage`
 - `/item Cabbage`
@@ -37,23 +49,20 @@ Test:
 - `/codex Didn't Mean to Stay`
 - `/guide crafting`
 
-## D. Structure/publisher
+## F. Publisher
 
-1. `/sv13setup`
-2. Confirm category/channels/forums appear.
-3. `/sv13publish scope:recipes limit:20`
-4. Confirm recipe forum posts are created.
-5. Run the same command again.
-6. Existing unchanged posts should be skipped rather than duplicated.
+1. `/sv13publish scope:recipes limit:20`
+2. Confirm recipe posts are created.
+3. Run the same command again.
+4. Existing unchanged posts should be skipped.
+5. Change one recipe in Unity, export again, `/sv13sync`, then publish.
+6. The existing changed post should be edited rather than duplicated.
 
-## E. Unity → Discord sync
+## G. Automatic sync
 
-1. Leave the bot running.
-2. Make a harmless test change in Unity data.
-3. Build a fresh **Authoritative Knowledge Package**.
-4. Wait for the configured sync interval, or run `/sv13sync`.
-5. `#intel-updates` should receive an uplink update.
-6. Run `/sv13publish` for the relevant scope.
-7. The existing changed forum post should be edited rather than duplicated.
+1. Leave `AUTO_PUBLISH=false` for the first live tests.
+2. Update the knowledge source.
+3. Wait for the sync interval or use `/sv13sync`.
+4. Confirm `#intel-updates` receives an uplink card.
 
-Only after these tests pass should `AUTO_PUBLISH=true` be enabled.
+Only enable `AUTO_PUBLISH=true` after the public content/layout has been reviewed.

@@ -1,16 +1,13 @@
-# SV13 Survivor Database Bot v0.1.0
+# SV13 Survivor Database Bot v0.1.1
 
-A Discord bot that consumes the **SV13 Project Intelligence v0.7 knowledge package**.
+Discord bot for the **SV13 Project Intelligence v0.7 knowledge package**.
 
-The Unity project remains the source of truth. The bot reads:
+Unity remains the source of truth. The bot supports two knowledge-source modes:
 
-`<Unity Project>\SV13_Knowledge\Latest\manifest.json`
+1. **Local mode** — reads a Unity-generated `SV13_Knowledge/Latest` directory.
+2. **Remote mode** — downloads `manifest.json` and its listed files from a hosted HTTP/HTTPS directory into a verified local cache. This is the intended Railway/website path.
 
-and the accompanying JSON datasets.
-
-## Included commands
-
-Public:
+## Public commands
 
 - `/search`
 - `/guide`
@@ -23,74 +20,103 @@ Public:
 - `/codex`
 - `/sv13status`
 
-Admin:
+## Staff commands
 
-- `/sv13setup` — creates/repairs the SV13 category, two text channels, and four forum channels.
-- `/sv13sync` — forces a knowledge reload and posts an intel-update card.
+- `/sv13setup` — creates/repairs the SV13 category, text channels and guide forums.
+- `/sv13sync` — refreshes the configured local/remote knowledge package.
 - `/sv13publish` — incrementally creates/updates forum guide posts.
 
-The bot maintains a local SQLite state file so a later Unity export can update existing guide posts instead of creating duplicates.
+Staff commands perform their own `Manage Server`/owner check; Discord's default command permission alone is not treated as security.
 
-## Discord structure created by `/sv13setup`
+## Discord structure
 
-Category:
+`/sv13setup` creates or repairs:
 
-**SV13 • SURVIVOR DATABASE**
+- **SV13 • SURVIVOR DATABASE**
+  - `#database-terminal`
+  - `#intel-updates`
+  - `item-index` (Forum)
+  - `crafting-manual` (Forum)
+  - `construction-manual` (Forum)
+  - `field-manual` (Forum)
 
-Channels:
+Existing bot-managed channels are tracked by ID in SQLite and repaired in place where possible.
 
-- `#database-terminal`
-- `#intel-updates`
-- `item-index` (Forum)
-- `crafting-manual` (Forum)
-- `construction-manual` (Forum)
-- `field-manual` (Forum)
-
-The forums are bot-managed by default. Members consume them and use slash commands anywhere they can access the bot.
-
-## Windows install
+## Local Windows install
 
 1. Install Python 3.11+.
 2. Run `install_windows.bat`.
 3. Edit `.env`.
-4. Point `SV13_KNOWLEDGE_DIR` at the Unity-generated `SV13_Knowledge\Latest` folder.
-5. Run the smoke test before connecting Discord:
+4. Set:
+   - `DISCORD_TOKEN`
+   - `DISCORD_GUILD_ID`
+   - local `SV13_KNOWLEDGE_DIR`
+5. Validate the knowledge package:
 
-```bat
-.venv\Scripts\python.exe tools\smoke_test.py --knowledge "C:\Path\To\UnityProject\SV13_Knowledge\Latest"
-```
+   ```bat
+   .venv\Scripts\python.exe tools\smoke_test.py --knowledge "C:\Path\To\UnityProject\SV13_Knowledge\Latest"
+   ```
 
 6. Run `run_bot.bat`.
 
-## First Discord test sequence
+## Knowledge integrity
 
-1. Create the Discord application/bot and invite it to a private test server.
-2. Put the bot token and server ID in `.env`.
-3. Start the bot.
-4. Run `/sv13setup`.
-5. Run `/sv13status`.
-6. Test `/search cabbage`, `/item Cabbage`, `/recipe .45 ACP`, and `/building SV13_GreenHouse`.
-7. Run `/sv13publish scope:recipes limit:20`.
-8. Verify posts appeared in `crafting-manual`.
-9. Run `/sv13publish scope:buildings limit:20`.
-10. Export a fresh knowledge package from Unity, then run `/sv13sync`.
-11. After initial publishing is proven, set `AUTO_PUBLISH=true` if desired.
+On every package load the bot verifies:
 
-## Knowledge publication policy
+- `manifest.json` contains every required dataset
+- every manifest-listed file exists
+- byte counts match when supplied
+- SHA-256 hashes match when supplied
+- expected datasets have the correct top-level JSON shape
 
-The bot ingests the entire package but publicly exposes only:
+A broken/partial package is rejected rather than silently replacing the last working data in memory.
 
-- `SV13AuthoredCandidate`
-- `ProjectIntegratedCandidate`
+## Remote knowledge mode
 
-by default.
+Set:
 
-Additional conservative filters hide obvious example/demo/prototype data, blank level definitions, and recipes whose ingredients are not confirmed.
+```env
+SV13_KNOWLEDGE_BASE_URL=https://example.com/sv13-knowledge/Latest
+SV13_KNOWLEDGE_CACHE_DIR=data/knowledge-cache
+```
 
-This policy lives on the bot side so Unity can continue exporting all evidence without deleting or rewriting source data.
+The URL must expose:
+
+`manifest.json`, `items.json`, `recipes.json`, `item_categories.json`,
+`buildables.json`, `build_materials.json`, `crops.json`, `fishing.json`,
+`documents.json`, `levels.json`, `loot_tables.json`, `validation.json`,
+and any additional files listed by the manifest.
+
+Downloads are staged and hash-verified before the active cache is replaced.
+
+## Runtime state / Railway warning
+
+The bot stores Discord channel IDs and published-post IDs in SQLite. This file **must persist** in production or the bot can lose track of existing generated posts.
+
+Locally the default is:
+
+`data/sv13_bot.sqlite3`
+
+On Railway, attach a persistent Volume and set `STATE_DB_PATH` inside that mount (we will configure this during the Railway setup pass).
+
+## Publication policy
+
+`AUTO_PUBLISH=false` remains the safe default.
+
+The Unity `contentStatus` value is a source/review classification, not proof of gameplay reachability. Do not enable automatic bulk publishing until the public dataset/layout has been reviewed in Discord.
+
+## Repository preflight
+
+Run:
+
+```bat
+.venv\Scripts\python.exe tools\repo_audit.py
+```
+
+This checks required files, Python syntax, cache artifacts and obvious committed-secret patterns.
 
 ## Website integration
 
-`WEB_BASE_URL` is reserved now. Leave it blank until the site exists.
+`WEB_BASE_URL` is reserved for the web field manual.
 
-The website should consume the same versioned knowledge package/manifest as Discord. Once the domain and hosting are ready, the bot can move from a local Unity folder to a hosted knowledge endpoint without changing the user-facing command model.
+Discord and the website should both consume the same versioned SV13 knowledge package so Unity remains the single source of truth.
