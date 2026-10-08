@@ -56,7 +56,16 @@ class AdminCommands(commands.Cog):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
 
-        changed, changed_files = self.bot.knowledge.reload_if_changed(force=True)
+        try:
+            changed, changed_files = await self.bot.refresh_knowledge(force=True)
+        except Exception as exc:
+            await interaction.followup.send(
+                f"SV13 knowledge refresh failed: `{type(exc).__name__}`. "
+                "Check the bot logs for the full error.",
+                ephemeral=True,
+            )
+            return
+
         if interaction.guild is not None:
             await self.bot.post_sync_update(interaction.guild, changed_files)
 
