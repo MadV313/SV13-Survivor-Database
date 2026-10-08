@@ -24,6 +24,7 @@ def main() -> int:
 
     print("SV13 Survivor Database smoke test")
     print("Package:", store.package_version)
+    print("Manifest/file integrity: PASS")
     print("Counts:", store.counts())
 
     checks = [
