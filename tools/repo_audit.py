@@ -17,6 +17,7 @@ REQUIRED = [
     "sv13bot/config.py",
     "sv13bot/bot_app.py",
     "sv13bot/knowledge.py",
+    "sv13bot/media.py",
     "sv13bot/knowledge_source.py",
     "sv13bot/state.py",
     "sv13bot/discord_setup.py",
@@ -24,6 +25,7 @@ REQUIRED = [
     "sv13bot/embeds.py",
     "sv13bot/cogs/public.py",
     "sv13bot/cogs/admin.py",
+    "tools/build_media_bundle.py",
 ]
 
 
