@@ -3,6 +3,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -50,6 +51,7 @@ class KnowledgeStore:
         self.levels: List[Dict[str, Any]] = []
         self.loot_tables: List[Dict[str, Any]] = []
         self.validation: List[Dict[str, Any]] = []
+        self.media_index: Dict[str, str] = {}
 
         self._manifest_fingerprint = ""
         self._file_hashes: Dict[str, str] = {}
@@ -98,6 +100,21 @@ class KnowledgeStore:
         levels = self._read_json(DATA_FILES["levels"])
         loot_tables = self._read_json(DATA_FILES["loot_tables"])
         validation = self._read_json(DATA_FILES["validation"])
+
+        media_index: Dict[str, str] = {}
+        media_index_path = self.knowledge_dir / "media_index.json"
+        if media_index_path.is_file():
+            raw_media = self._read_json("media_index.json")
+            if isinstance(raw_media, dict):
+                assets = raw_media.get("assets", [])
+                if isinstance(assets, list):
+                    for entry in assets:
+                        if not isinstance(entry, dict):
+                            continue
+                        asset_path = str(entry.get("assetPath", "")).strip()
+                        file_name = str(entry.get("fileName", "")).strip()
+                        if asset_path and file_name:
+                            media_index[asset_path] = file_name
 
         for label, value in (
             ("items", items),
@@ -150,6 +167,7 @@ class KnowledgeStore:
         self.levels = levels
         self.loot_tables = loot_tables
         self.validation = validation
+        self.media_index = media_index
         self._file_hashes = file_hashes
         self._manifest_fingerprint = manifest_fingerprint
         self._rebuild_indexes()
@@ -327,20 +345,21 @@ class KnowledgeStore:
     def autocomplete(
         self, query: str, kind: str, limit: int = 25
     ) -> List[str]:
-        hits = self.search(query or " ", kind=kind, limit=limit, include_review=False)
-        if hits:
+        query = (query or "").strip()
+        if query:
+            hits = self.search(query, kind=kind, limit=limit, include_review=False)
             return [h.name[:100] for h in hits[:limit]]
 
-        # Empty autocomplete query: show a small alphabetical sample.
-        records = [
-            r for r in self._indexes.get(self._normalize_kind(kind), [])
-            if self.is_public(self._normalize_kind(kind), r)
-        ]
-        names = sorted(
-            {self.display_name(self._normalize_kind(kind), r) for r in records},
-            key=str.lower,
-        )
-        return [n[:100] for n in names[:limit] if n]
+        # Discord allows at most 25 autocomplete choices. With no typed text,
+        # show an alphabetical slice across the currently selected dataset.
+        names = set()
+        for candidate_kind in self._candidate_kinds(kind):
+            for record in self._indexes.get(candidate_kind, []):
+                if self.is_public(candidate_kind, record):
+                    name = self.display_name(candidate_kind, record)
+                    if name:
+                        names.add(name)
+        return [n[:100] for n in sorted(names, key=str.lower)[:limit]]
 
     def is_public(self, kind: str, record: Dict[str, Any]) -> bool:
         source = record.get("source") or {}
@@ -390,23 +409,129 @@ class KnowledgeStore:
 
     def display_name(self, kind: str, record: Dict[str, Any]) -> str:
         if kind == "recipe":
-            return str(record.get("resultItemName", "") or record.get("recipeKey", ""))
+            raw = str(record.get("resultItemName", "") or record.get("recipeKey", ""))
+        elif kind == "building":
+            raw = str(record.get("name", ""))
+            if raw.startswith("BuildingPiece_") and record.get("description"):
+                raw = str(record.get("description"))
+        elif kind == "crop":
+            raw = str(record.get("cropName", "") or record.get("name", ""))
+        elif kind == "bait":
+            raw = str(record.get("baitName", "") or record.get("assetName", ""))
+        elif kind == "fishing":
+            raw = str(record.get("lootName", "") or record.get("assetName", ""))
+        elif kind == "document":
+            raw = str(record.get("title", "") or record.get("id", ""))
+        elif kind == "level":
+            raw = str(record.get("name", "") or record.get("assetName", ""))
+        else:
+            raw = str(record.get("name", ""))
+        return self.friendly_label(raw)
+
+    @staticmethod
+    def friendly_label(value: Any) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+
+        # Remove implementation/vendor prefixes from player-facing copy while
+        # retaining the untouched raw values in the knowledge records for audit.
+        for _ in range(4):
+            updated = re.sub(
+                r"^(?:SV13|HQFPS|STP|FPSCore|FPS)[_\- ]+",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            )
+            if updated == text:
+                break
+            text = updated.strip()
+
+        text = re.sub(r"^RarityLevel[_\- ]+", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"^ItemCategory[_\- ]+", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"^Category[_\- ]+", "", text, flags=re.IGNORECASE)
+        text = text.replace("_", " ")
+        text = re.sub(r"\s+", " ", text).strip()
+
+        # SV13 uses .45 ACP in player-facing copy while several source assets
+        # are named "45 ACP".
+        text = re.sub(r"(?<!\d)45 ACP\b", ".45 ACP", text, flags=re.IGNORECASE)
+        return text
+
+    def rarity_label(self, value: Any) -> str:
+        label = self.friendly_label(value)
+        label = re.sub(r"^RarityLevel\s*", "", label, flags=re.IGNORECASE).strip()
+        return label or "Unknown"
+
+    def building_context(self, record: Dict[str, Any]) -> str:
+        components = {str(x) for x in (record.get("sv13ComponentTypes") or [])}
+        if "SV13PermanentUpgradeController" in components:
+            return "Boren Player Cabin Upgrade"
+        if "SV13PermanentConstructable" in components:
+            return "Player Cabin Construction"
+        return self.friendly_label(record.get("categoryName")) or "Construction"
+
+    def media_asset_path_for(self, kind: str, record: Dict[str, Any]) -> str:
+        if kind == "item":
+            return str(record.get("iconAssetPath", ""))
+        if kind == "recipe":
+            item = self._item_by_id.get(int(record.get("resultItemId", 0)))
+            return str(item.get("iconAssetPath", "")) if item else ""
         if kind == "building":
-            return str(record.get("name", ""))
+            return str(record.get("iconAssetPath", ""))
         if kind == "crop":
-            return str(record.get("cropName", "") or record.get("name", ""))
+            item = self._item_by_id.get(int(record.get("produceItemId", 0)))
+            return str(item.get("iconAssetPath", "")) if item else ""
         if kind == "bait":
-            return str(record.get("baitName", "") or record.get("assetName", ""))
+            for linked in record.get("linkedItems") or []:
+                item = self._item_by_id.get(int(linked.get("id", 0)))
+                if item and item.get("iconAssetPath"):
+                    return str(item["iconAssetPath"])
+            return ""
         if kind == "fishing":
-            return str(record.get("lootName", "") or record.get("assetName", ""))
-        if kind == "document":
-            return str(record.get("title", "") or record.get("id", ""))
+            item = self._item_by_clean_name.get(
+                self.friendly_label(
+                    record.get("lootName") or record.get("assetName")
+                ).lower()
+            )
+            return str(item.get("iconAssetPath", "")) if item else ""
         if kind == "level":
-            return str(record.get("name", "") or record.get("assetName", ""))
-        return str(record.get("name", ""))
+            return str(
+                record.get("thumbnailAssetPath")
+                or record.get("loadingImageAssetPath")
+                or ""
+            )
+        return ""
+
+    def media_path_for(self, kind: str, record: Dict[str, Any]) -> Optional[Path]:
+        asset_path = self.media_asset_path_for(kind, record)
+        file_name = self.media_index.get(asset_path, "")
+        if not file_name:
+            return None
+        candidate = self.knowledge_dir / Path(file_name).name
+        return candidate if candidate.is_file() else None
 
     def aliases(self, kind: str, record: Dict[str, Any]) -> List[str]:
         aliases: List[str] = []
+        # Always keep the raw exported name searchable even though the public
+        # display name is scrubbed of implementation prefixes.
+        if kind == "recipe":
+            aliases.append(str(record.get("resultItemName", "")))
+        elif kind == "building":
+            aliases.append(str(record.get("name", "")))
+        elif kind == "crop":
+            aliases.append(str(record.get("cropName", "") or record.get("name", "")))
+        elif kind == "bait":
+            aliases.append(str(record.get("baitName", "") or record.get("assetName", "")))
+        elif kind == "fishing":
+            aliases.append(str(record.get("lootName", "") or record.get("assetName", "")))
+        elif kind == "document":
+            aliases.append(str(record.get("title", "") or record.get("id", "")))
+        elif kind == "level":
+            aliases.append(str(record.get("name", "") or record.get("assetName", "")))
+        else:
+            aliases.append(str(record.get("name", "")))
+
         if kind == "item":
             aliases.extend(
                 [
@@ -503,6 +628,21 @@ class KnowledgeStore:
             return json.load(f)
 
     def _rebuild_indexes(self) -> None:
+        self._item_by_id = {
+            int(item.get("id", 0)): item
+            for item in self.items
+            if int(item.get("id", 0)) != 0
+        }
+        self._item_by_asset_path = {
+            str((item.get("source") or {}).get("assetPath", "")): item
+            for item in self.items
+            if str((item.get("source") or {}).get("assetPath", ""))
+        }
+        self._item_by_clean_name = {
+            self.friendly_label(item.get("name")).lower(): item
+            for item in self.items
+            if self.friendly_label(item.get("name"))
+        }
         self._indexes = {
             "item": list(self.items),
             "recipe": list(self.recipes),

@@ -19,6 +19,7 @@ from .embeds import (
     recipe_embed,
 )
 from .knowledge import KnowledgeStore
+from .media import attach_record_thumbnail
 from .state import StateStore
 
 
@@ -68,10 +69,11 @@ class KnowledgePublisher:
                     continue
 
                 embed = self._embed(kind, record)
+                media = attach_record_thumbnail(embed, self.store, kind, record)
                 title = self._thread_title(kind, record)
 
                 if prior:
-                    ok = await self._update_existing(guild, prior, title, embed)
+                    ok = await self._update_existing(guild, prior, title, embed, media)
                     if ok:
                         self.state.upsert_published(
                             guild.id,
@@ -87,11 +89,14 @@ class KnowledgePublisher:
                         await asyncio.sleep(0.35)
                         continue
 
-                result = await channel.create_thread(
-                    name=title[:100],
-                    embed=embed,
-                    reason="SV13 knowledge publisher",
-                )
+                create_kwargs = {
+                    "name": title[:100],
+                    "embed": embed,
+                    "reason": "SV13 knowledge publisher",
+                }
+                if media is not None:
+                    create_kwargs["file"] = media
+                result = await channel.create_thread(**create_kwargs)
                 thread, message = self._unpack_thread_result(result)
                 if thread is None or message is None:
                     skipped += 1
@@ -124,6 +129,7 @@ class KnowledgePublisher:
         prior: Dict[str, Any],
         title: str,
         embed: discord.Embed,
+        media: Optional[discord.File] = None,
     ) -> bool:
         try:
             thread = guild.get_thread(int(prior["thread_id"]))
@@ -138,7 +144,10 @@ class KnowledgePublisher:
                 await thread.edit(name=title[:100], reason="SV13 knowledge refresh")
 
             message = await thread.fetch_message(int(prior["message_id"]))
-            await message.edit(embed=embed)
+            if media is not None:
+                await message.edit(embed=embed, attachments=[media])
+            else:
+                await message.edit(embed=embed)
             return True
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
             return False
@@ -161,17 +170,17 @@ class KnowledgePublisher:
         if kind == "item":
             return item_embed(record, self.store, self.config)
         if kind == "recipe":
-            return recipe_embed(record, self.config)
+            return recipe_embed(record, self.store, self.config)
         if kind == "building":
-            return building_embed(record, self.config)
+            return building_embed(record, self.store, self.config)
         if kind == "crop":
-            return crop_embed(record, self.config)
+            return crop_embed(record, self.store, self.config)
         if kind in {"bait", "fishing"}:
-            return fishing_embed(record, kind, self.config)
+            return fishing_embed(record, kind, self.store, self.config)
         if kind == "document":
-            return document_embed(record, self.config)
+            return document_embed(record, self.store, self.config)
         if kind == "level":
-            return level_embed(record, self.config)
+            return level_embed(record, self.store, self.config)
         raise ValueError(f"Unsupported publish kind: {kind}")
 
     def _thread_title(self, kind: str, record: Dict[str, Any]) -> str:

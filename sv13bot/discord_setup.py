@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Type, TypeVar
+from typing import Dict, Optional, Type, TypeVar, Tuple
 
 import discord
 
@@ -33,6 +33,7 @@ async def ensure_discord_structure(
             view_channel=True,
             send_messages=True,
             embed_links=True,
+            attach_files=True,
             read_message_history=True,
             manage_messages=True,
             manage_threads=True,
@@ -67,7 +68,7 @@ async def ensure_discord_structure(
         config.item_forum_name,
         category,
         overwrites,
-        "SV13 item database generated from the authoritative Unity knowledge package.",
+        "SV13 item database generated from the authoritative game-data package.",
         state,
     )
     crafting = await _ensure_forum(
@@ -85,7 +86,7 @@ async def ensure_discord_structure(
         config.building_forum_name,
         category,
         overwrites,
-        "SV13 construction manual generated from buildable definitions.",
+        "SV13 construction manual and Player Cabin upgrade records.",
         state,
     )
     field = await _ensure_forum(
@@ -108,6 +109,67 @@ async def ensure_discord_structure(
     }
 
     await ensure_terminal_message(guild, terminal, config, state)
+    await _ensure_text_intro(
+        guild,
+        intel,
+        state,
+        "intel_intro_message_id",
+        base_embed(
+            "📡 SV13 // INTEL UPDATES",
+            "This channel is maintained by the Survivor Database. "
+            "Knowledge-package refreshes and database update notices appear here automatically.",
+        ),
+    )
+
+    await _ensure_forum_intro(
+        guild,
+        items,
+        state,
+        "items",
+        "START HERE // ITEM INDEX",
+        base_embed(
+            "📦 ITEM INDEX // START HERE",
+            "Bot-managed item reference posts live here. "
+            "For a private lookup anywhere in the server, use `/item` and start typing a name.",
+        ),
+    )
+    await _ensure_forum_intro(
+        guild,
+        crafting,
+        state,
+        "crafting",
+        "START HERE // CRAFTING MANUAL",
+        base_embed(
+            "🛠️ CRAFTING MANUAL // START HERE",
+            "Recipes published here come from the current SV13 knowledge package. "
+            "Use `/recipe` and start typing to browse current choices privately.",
+        ),
+    )
+    await _ensure_forum_intro(
+        guild,
+        building,
+        state,
+        "building",
+        "START HERE // CONSTRUCTION MANUAL",
+        base_embed(
+            "🏗️ CONSTRUCTION MANUAL // START HERE",
+            "Build requirements, assembly information and Player Cabin upgrades are indexed here. "
+            "Use `/building` and start typing for a private lookup.",
+        ),
+    )
+    await _ensure_forum_intro(
+        guild,
+        field,
+        state,
+        "field",
+        "START HERE // FIELD MANUAL",
+        base_embed(
+            "🌲 FIELD MANUAL // START HERE",
+            "Farming, fishing, area intel and recovered documents are collected here. "
+            "Use `/crop`, `/fishing`, `/map` or `/codex` and start typing to browse.",
+        ),
+    )
+
     return channels
 
 
@@ -144,28 +206,107 @@ async def ensure_terminal_message(
     config: BotConfig,
     state: StateStore,
 ) -> None:
-    existing_id = state.get_meta(guild.id, "terminal_message_id")
+    await _ensure_text_intro(
+        guild,
+        terminal,
+        state,
+        "terminal_message_id",
+        _terminal_embed(config),
+    )
+
+
+async def _ensure_text_intro(
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    state: StateStore,
+    meta_key: str,
+    embed: discord.Embed,
+) -> None:
+    existing_id = state.get_meta(guild.id, meta_key)
     if existing_id:
         try:
-            msg = await terminal.fetch_message(int(existing_id))
-            await msg.edit(embed=_terminal_embed(config))
+            msg = await channel.fetch_message(int(existing_id))
+            await msg.edit(embed=embed)
+            if not msg.pinned:
+                await msg.pin(reason="SV13 Survivor Database channel guide")
             return
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
             pass
 
-    msg = await terminal.send(embed=_terminal_embed(config))
+    msg = await channel.send(embed=embed)
     try:
-        await msg.pin(reason="SV13 Survivor Database terminal")
+        await msg.pin(reason="SV13 Survivor Database channel guide")
     except (discord.Forbidden, discord.HTTPException):
         pass
-    state.set_meta(guild.id, "terminal_message_id", str(msg.id))
+    state.set_meta(guild.id, meta_key, str(msg.id))
+
+
+async def _ensure_forum_intro(
+    guild: discord.Guild,
+    forum: discord.ForumChannel,
+    state: StateStore,
+    key: str,
+    title: str,
+    embed: discord.Embed,
+) -> None:
+    thread_meta = f"{key}_intro_thread_id"
+    message_meta = f"{key}_intro_message_id"
+
+    thread_id = state.get_meta(guild.id, thread_meta)
+    message_id = state.get_meta(guild.id, message_meta)
+
+    if thread_id and message_id:
+        try:
+            thread = guild.get_thread(int(thread_id))
+            if thread is None:
+                fetched = await guild.fetch_channel(int(thread_id))
+                thread = fetched if isinstance(fetched, discord.Thread) else None
+            if thread is not None:
+                message = await thread.fetch_message(int(message_id))
+                await message.edit(embed=embed)
+                if not message.pinned:
+                    await message.pin(reason="SV13 Survivor Database forum guide")
+                return
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+            pass
+
+    result = await forum.create_thread(
+        name=title[:100],
+        embed=embed,
+        reason="SV13 Survivor Database forum guide",
+    )
+    thread, message = _unpack_forum_thread(result)
+    if thread is None or message is None:
+        return
+
+    try:
+        await message.pin(reason="SV13 Survivor Database forum guide")
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+
+    state.set_meta(guild.id, thread_meta, str(thread.id))
+    state.set_meta(guild.id, message_meta, str(message.id))
+
+
+def _unpack_forum_thread(result: object) -> Tuple[Optional[discord.Thread], Optional[discord.Message]]:
+    thread = getattr(result, "thread", None)
+    message = getattr(result, "message", None)
+    if isinstance(thread, discord.Thread) and isinstance(message, discord.Message):
+        return thread, message
+
+    if isinstance(result, tuple) and len(result) >= 2:
+        maybe_thread, maybe_message = result[0], result[1]
+        if isinstance(maybe_thread, discord.Thread) and isinstance(maybe_message, discord.Message):
+            return maybe_thread, maybe_message
+
+    return None, None
 
 
 def _terminal_embed(config: BotConfig) -> discord.Embed:
     embed = base_embed(
         "☢️ SV13 // SURVIVOR DATABASE",
-        "A live field manual backed by SV13's Unity knowledge export.\n\n"
-        "Search the database from anywhere in the server with slash commands.",
+        "A live field manual backed by SV13's current game-data export.\n\n"
+        "Player lookups are private to the person using the command, so normal searches do not flood public channels.",
     )
     embed.add_field(
         name="General Search",
@@ -178,12 +319,21 @@ def _terminal_embed(config: BotConfig) -> discord.Embed:
         inline=False,
     )
     embed.add_field(
+        name="How to Search",
+        value="Choose a command and start typing. Discord will suggest current database entries automatically.",
+        inline=False,
+    )
+    embed.add_field(
         name="Uplink",
-        value="`/sv13status` shows the currently loaded Unity knowledge package.",
+        value="`/sv13status` shows the currently loaded knowledge package.",
         inline=False,
     )
     if config.web_base_url:
-        embed.add_field(name="Web Field Manual", value=config.web_base_url, inline=False)
+        embed.add_field(
+            name="Web Field Manual",
+            value=config.web_base_url,
+            inline=False,
+        )
     return embed
 
 
