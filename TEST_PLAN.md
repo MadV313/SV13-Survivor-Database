@@ -1,4 +1,4 @@
-# SV13 Bot v0.2.1 Test Plan
+# SV13 Bot v0.3.0 Test Plan
 
 ## A. Repository preflight
 
@@ -23,6 +23,9 @@ Expected:
 - building search PASS
 - crop search PASS
 - document search PASS
+- area search PASS
+- weather search PASS
+- UI search PASS
 - final loader/search PASS
 
 ## C. Discord startup
@@ -47,8 +50,15 @@ Expected:
 - `/recipe .45 ACP`
 - `/building SV13_GreenHouse`
 - `/crop Cabbage`
+- `/map Player Cabin`
+- `/weather Player Cabin`
+- `/ui Health`
+- `/ui Stamina`
+- `/ui Blizzard`
+- `/ui Skill Point`
 - `/codex Didn't Mean to Stay`
-- `/guide crafting`
+- `/guide weather`
+- `/guide interface`
 
 ## F. Publisher
 

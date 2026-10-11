@@ -1,6 +1,6 @@
-# SV13 Survivor Database Bot v0.2.1
+# SV13 Survivor Database Bot v0.3.0
 
-Discord bot for the **SV13 Project Intelligence v0.7 knowledge package**.
+Discord bot for the **SV13 Project Intelligence knowledge package**, including schema-4 area/weather/UI intelligence.
 
 Unity remains the source of truth. The bot supports two knowledge-source modes:
 
@@ -16,7 +16,9 @@ Unity remains the source of truth. The bot supports two knowledge-source modes:
 - `/building`
 - `/crop`
 - `/fishing`
-- `/map`
+- `/map` — area contents, Player Cabin upgrades, found intel, special systems, and weather links
+- `/weather` — scheduled weather plus captured health/stamina/temperature/shelter effects
+- `/ui` — HUD/UI icon, status, and control explanations
 - `/codex`
 - `/sv13status`
 
@@ -85,7 +87,9 @@ The URL must expose:
 `manifest.json`, `items.json`, `recipes.json`, `item_categories.json`,
 `buildables.json`, `build_materials.json`, `crops.json`, `fishing.json`,
 `documents.json`, `levels.json`, `loot_tables.json`, `validation.json`,
-and any additional files listed by the manifest.
+and any additional files listed by the manifest. Newer packages also expose
+`areas.json`, `weather.json`, and `ui.json`; v0.3 consumes them when present while
+remaining able to boot during a rolling deploy against an older package.
 
 Downloads are staged and hash-verified before the active cache is replaced.
 
