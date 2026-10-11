@@ -1,4 +1,4 @@
-# SV13 Survivor Database Bot v0.1.2
+# SV13 Survivor Database Bot v0.2.1
 
 Discord bot for the **SV13 Project Intelligence v0.7 knowledge package**.
 
@@ -22,9 +22,9 @@ Unity remains the source of truth. The bot supports two knowledge-source modes:
 
 ## Staff commands
 
-- `/sv13setup` — creates/repairs the SV13 category, text channels and guide forums.
-- `/sv13sync` — refreshes the configured local/remote knowledge package.
-- `/sv13publish` — incrementally creates/updates forum guide posts.
+- `/sv13setup` — creates/repairs the SV13 category, text channels, guide forums, pinned introductions, and managed forum tags.
+- `/sv13sync` — force-verifies the configured local/remote knowledge package; it only posts to `#intel-updates` when the package actually changed.
+- `/sv13publish` — incrementally creates/updates forum guide posts, media, and managed tags.
 
 Staff commands perform their own `Manage Server`/owner check; Discord's default command permission alone is not treated as security.
 
@@ -40,7 +40,7 @@ Staff commands perform their own `Manage Server`/owner check; Discord's default 
   - `construction-manual` (Forum)
   - `field-manual` (Forum)
 
-Existing bot-managed channels are tracked by ID in SQLite and repaired in place where possible.
+Existing bot-managed channels are tracked by ID in SQLite and repaired in place where possible. The bot adds a compact managed tag catalog to each forum without deleting owner-created tags.
 
 ## Local Windows install
 
@@ -69,7 +69,7 @@ On every package load the bot verifies:
 - SHA-256 hashes match when supplied
 - expected datasets have the correct top-level JSON shape
 
-A broken/partial package is rejected rather than silently replacing the last working data in memory.
+A broken/partial package is rejected rather than silently replacing the last working data in memory. A manual `/sv13sync` can re-download and re-verify an unchanged remote package without falsely announcing a public database update.
 
 ## Remote knowledge mode
 
@@ -130,3 +130,9 @@ versions so the first Railway deployment is deterministic.
 Railway still requires a reachable knowledge source before the bot can start:
 prefer `SV13_KNOWLEDGE_BASE_URL` pointing at the hosted
 `SV13_Knowledge/Latest` package.
+
+## Forum tags and publication refreshes
+
+`/sv13setup` reconciles managed forum tags. `/sv13publish` includes the selected tag names and the resolved media-file hash in each published entity's content fingerprint. This means existing bot-managed posts are refreshed when their classification changes or when a Unity sprite is replaced, even if the underlying JSON record otherwise remains identical.
+
+The bot does not delete owner-created forum tags. Discord forums are limited to 20 available tags, so leave enough room for the managed catalog.

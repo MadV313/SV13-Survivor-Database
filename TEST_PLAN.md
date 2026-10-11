@@ -1,4 +1,4 @@
-# SV13 Bot v0.1.1 Test Plan
+# SV13 Bot v0.2.1 Test Plan
 
 ## A. Repository preflight
 
@@ -38,6 +38,7 @@ Expected:
 2. Confirm the category, two text channels and four forums exist.
 3. Run `/sv13setup` again.
 4. Confirm it repairs/reuses the existing structure rather than creating duplicates.
+5. Confirm each forum now has managed tags and each `START HERE` post carries the `Start Here` tag.
 
 ## E. Query checks
 
@@ -55,14 +56,17 @@ Expected:
 2. Confirm recipe posts are created.
 3. Run the same command again.
 4. Existing unchanged posts should be skipped.
-5. Change one recipe in Unity, export again, `/sv13sync`, then publish.
-6. The existing changed post should be edited rather than duplicated.
+5. Confirm the published recipe/building posts have appropriate forum tags.
+6. Change one recipe in Unity, export again, `/sv13sync`, then publish.
+7. The existing changed post should be edited rather than duplicated.
+8. Replace one existing sprite without changing the JSON record, publish again, and confirm the existing post updates its attachment in place.
 
 ## G. Automatic sync
 
 1. Leave `AUTO_PUBLISH=false` for the first live tests.
 2. Update the knowledge source.
 3. Wait for the sync interval or use `/sv13sync`.
-4. Confirm `#intel-updates` receives an uplink card.
+4. Confirm `#intel-updates` receives an uplink card only when hashes/package metadata actually changed.
+5. Run `/sv13sync` again without changing the package and confirm the response is private and no second public uplink card is posted.
 
 Only enable `AUTO_PUBLISH=true` after the public content/layout has been reviewed.
