@@ -173,7 +173,7 @@ class KnowledgeSource:
         req = Request(
             url,
             headers={
-                "User-Agent": "SV13-Survivor-Database/0.2.1",
+                "User-Agent": "SV13-Survivor-Database/0.3.0",
                 "Accept": "application/json,text/plain,*/*",
                 "Cache-Control": "no-cache",
             },

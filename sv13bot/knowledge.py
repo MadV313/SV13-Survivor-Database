@@ -23,6 +23,15 @@ DATA_FILES = {
     "validation": "validation.json",
 }
 
+# Scene/world intelligence was added after the original bot shipped. Keep these
+# optional so a rolling Railway deploy can still boot against the previous
+# package while the new Unity export is being published to the website.
+OPTIONAL_DATA_FILES = {
+    "areas": "areas.json",
+    "weather": "weather.json",
+    "ui": "ui.json",
+}
+
 
 @dataclass
 class SearchHit:
@@ -50,6 +59,9 @@ class KnowledgeStore:
         self.documents: List[Dict[str, Any]] = []
         self.levels: List[Dict[str, Any]] = []
         self.loot_tables: List[Dict[str, Any]] = []
+        self.areas: List[Dict[str, Any]] = []
+        self.weather: List[Dict[str, Any]] = []
+        self.ui: List[Dict[str, Any]] = []
         self.validation: List[Dict[str, Any]] = []
         self.media_index: Dict[str, str] = {}
 
@@ -100,6 +112,10 @@ class KnowledgeStore:
         levels = self._read_json(DATA_FILES["levels"])
         loot_tables = self._read_json(DATA_FILES["loot_tables"])
         validation = self._read_json(DATA_FILES["validation"])
+
+        areas = self._read_optional_array(OPTIONAL_DATA_FILES["areas"])
+        weather = self._read_optional_array(OPTIONAL_DATA_FILES["weather"])
+        ui = self._read_optional_array(OPTIONAL_DATA_FILES["ui"])
 
         media_index: Dict[str, str] = {}
         media_index_path = self.knowledge_dir / "media_index.json"
@@ -166,6 +182,9 @@ class KnowledgeStore:
         self.documents = documents
         self.levels = levels
         self.loot_tables = loot_tables
+        self.areas = areas
+        self.weather = weather
+        self.ui = ui
         self.validation = validation
         self.media_index = media_index
         self._file_hashes = file_hashes
@@ -261,6 +280,9 @@ class KnowledgeStore:
             "crops": int(counts.get("crops", len(self.crops))),
             "documents": int(counts.get("documents", len(self.documents))),
             "levels": int(counts.get("levels", len(self.levels))),
+            "areas": int(counts.get("areas", len(self.areas))),
+            "weatherProfiles": int(counts.get("weatherProfiles", len(self.weather))),
+            "uiEntries": int(counts.get("uiEntries", len(self.ui))),
             "validationWarnings": int(counts.get("validationWarnings", 0)),
             "validationErrors": int(counts.get("validationErrors", 0)),
         }
@@ -277,6 +299,16 @@ class KnowledgeStore:
                 1 for r in self.documents if self.is_public("document", r)
             ),
             "levels": sum(1 for r in self.levels if self.is_public("level", r)),
+            "areas": sum(1 for r in self.areas if self.is_public("area", r)),
+            "capturedAreas": sum(
+                1
+                for r in self.areas
+                if self.is_public("area", r) and bool(r.get("hasSceneCapture"))
+            ),
+            "weatherProfiles": sum(
+                1 for r in self.weather if self.is_public("weather", r)
+            ),
+            "uiEntries": sum(1 for r in self.ui if self.is_public("ui", r)),
             "fishingBaits": sum(
                 1 for r in self.fishing.get("baits", []) if self.is_public("bait", r)
             ),
@@ -408,8 +440,14 @@ class KnowledgeStore:
             return self.crops
         if kind in {"document", "documents", "codex"}:
             return self.documents
-        if kind in {"map", "maps", "level", "levels"}:
+        if kind in {"map", "maps", "area", "areas"}:
+            return self.areas if self.areas else self.levels
+        if kind in {"level", "levels"}:
             return self.levels
+        if kind in {"weather", "storm", "storms", "environment"}:
+            return self.weather
+        if kind in {"ui", "hud", "interface", "icon", "icons"}:
+            return self.ui
         if kind in {"bait", "baits"}:
             return list(self.fishing.get("baits", []))
         if kind in {"fish", "fishing", "loot", "fishingloot"}:
@@ -445,7 +483,29 @@ class KnowledgeStore:
 
                 name = self.display_name(candidate_kind, record)
                 aliases = self.aliases(candidate_kind, record)
-                score = max(self._score(query, value) for value in [name, *aliases] if value)
+                name_score = self._score(query, name) if name else 0.0
+                alias_score = max(
+                    (self._score(query, value) for value in aliases if value),
+                    default=0.0,
+                )
+
+                if candidate_kind == "ui":
+                    # Category/meaning aliases make UI discoverable, but the
+                    # actual icon/control name should win over generic bars and
+                    # backgrounds that merely live in the same HUD category.
+                    score = max(name_score, alias_score * 0.84)
+                    if record.get("iconAuthoritative"):
+                        score += 0.08
+                    if record.get("playerHud"):
+                        score += 0.02
+                    low_name = name.lower()
+                    if any(token in low_name for token in ("background", "fill bar", "frame", "mask")) or low_name.endswith(" bg"):
+                        score -= 0.15
+                    if low_name.endswith(" text") or low_name == "text":
+                        score -= 0.04
+                    score = min(1.0, max(0.0, score))
+                else:
+                    score = max(name_score, alias_score)
 
                 if score < 0.32:
                     continue
@@ -493,6 +553,36 @@ class KnowledgeStore:
         return [n[:100] for n in sorted(names, key=str.lower)[:limit]]
 
     def is_public(self, kind: str, record: Dict[str, Any]) -> bool:
+        # Scene intelligence records do not carry their own Unity contentStatus;
+        # inherit publication eligibility from the corresponding LevelDefinition.
+        if kind == "area":
+            level = self.level_for_area(record)
+            return level is not None and self.is_public("level", level)
+
+        if kind == "weather":
+            area = self.area_for_weather(record)
+            return (
+                area is not None
+                and self.is_public("area", area)
+                and bool(record.get("hasWeatherSystem", True))
+            )
+
+        if kind == "ui":
+            name = self.display_name("ui", record).strip()
+            if not name:
+                return False
+            scenes = [str(x).strip() for x in (record.get("sourceScenes") or []) if str(x).strip()]
+            if scenes and not any(self._is_public_scene_name(scene) for scene in scenes):
+                return False
+            # ui.json is already the curated public layer. Require either a real
+            # icon, visible text, or a meaningful explanation before surfacing it.
+            return bool(
+                record.get("iconAuthoritative")
+                or record.get("visibleLabels")
+                or str(record.get("importance", "")).strip()
+                or str(record.get("meaning", "")).strip()
+            )
+
         source = record.get("source") or {}
         status = str(source.get("contentStatus", "")).strip()
         if status not in self.public_statuses:
@@ -536,6 +626,12 @@ class KnowledgeStore:
             return f"document:{record.get('id', '')}:{path}"
         if kind == "level":
             return f"level:{path}"
+        if kind == "area":
+            return f"area:{record.get('areaKey', '')}:{record.get('sceneAssetPath', '')}"
+        if kind == "weather":
+            return f"weather:{record.get('areaKey', '')}:{record.get('sceneAssetPath', '')}"
+        if kind == "ui":
+            return f"ui:{record.get('uiKey', '')}"
         return f"{kind}:{path}:{self.display_name(kind, record)}"
 
     def display_name(self, kind: str, record: Dict[str, Any]) -> str:
@@ -555,6 +651,12 @@ class KnowledgeStore:
             raw = str(record.get("title", "") or record.get("id", ""))
         elif kind == "level":
             raw = str(record.get("name", "") or record.get("assetName", ""))
+        elif kind == "area":
+            raw = str(record.get("name", "") or record.get("areaKey", "") or record.get("sceneName", ""))
+        elif kind == "weather":
+            raw = str(record.get("areaName", "") or record.get("areaKey", "") or record.get("sceneName", ""))
+        elif kind == "ui":
+            raw = self._ui_public_name(record)
         else:
             raw = str(record.get("name", ""))
         return self.friendly_label(raw)
@@ -626,12 +728,17 @@ class KnowledgeStore:
                 ).lower()
             )
             return str(item.get("iconAssetPath", "")) if item else ""
-        if kind == "level":
+        if kind in {"level", "area"}:
             return str(
                 record.get("thumbnailAssetPath")
                 or record.get("loadingImageAssetPath")
                 or ""
             )
+        if kind == "weather":
+            area = self.area_for_weather(record)
+            return self.media_asset_path_for("area", area) if area else ""
+        if kind == "ui":
+            return str(record.get("iconAssetPath", ""))
         return ""
 
     def media_path_for(self, kind: str, record: Dict[str, Any]) -> Optional[Path]:
@@ -660,6 +767,12 @@ class KnowledgeStore:
             aliases.append(str(record.get("title", "") or record.get("id", "")))
         elif kind == "level":
             aliases.append(str(record.get("name", "") or record.get("assetName", "")))
+        elif kind == "area":
+            aliases.append(str(record.get("name", "") or record.get("areaKey", "")))
+        elif kind == "weather":
+            aliases.append(str(record.get("areaName", "") or record.get("areaKey", "")))
+        elif kind == "ui":
+            aliases.append(str(record.get("name", "")))
         else:
             aliases.append(str(record.get("name", "")))
 
@@ -724,7 +837,134 @@ class KnowledgeStore:
                     str(record.get("assetName", "")),
                 ]
             )
+        elif kind == "area":
+            aliases.extend(
+                [
+                    str(record.get("areaKey", "")),
+                    str(record.get("sceneName", "")),
+                    str(record.get("description", "")),
+                    " ".join(str(x) for x in (record.get("activities") or [])),
+                    " ".join(str(x) for x in (record.get("borenUpgrades") or [])),
+                    " ".join(
+                        str(x.get("name", "")) + " " + str(x.get("summary", "")) + " " +
+                        " ".join(str(v) for v in (x.get("capabilities") or []))
+                        for x in (record.get("upgrades") or []) if isinstance(x, dict)
+                    ),
+                    " ".join(
+                        str(x.get("name", "")) + " " + str(x.get("summary", ""))
+                        for x in (record.get("specialFeatures") or []) if isinstance(x, dict)
+                    ),
+                ]
+            )
+        elif kind == "weather":
+            aliases.extend(
+                [
+                    str(record.get("areaKey", "")),
+                    str(record.get("sceneName", "")),
+                    " ".join(str(x) for x in (record.get("scheduledWeatherTypes") or [])),
+                    " ".join(str(x) for x in (record.get("supportedHazardTypes") or [])),
+                    " ".join(
+                        str(x.get("label", "")) for x in (record.get("facts") or [])
+                        if isinstance(x, dict)
+                    ),
+                ]
+            )
+        elif kind == "ui":
+            aliases.extend(
+                [
+                    str(record.get("category", "")),
+                    str(record.get("meaning", "")),
+                    str(record.get("importance", "")),
+                    str(record.get("iconName", "")),
+                    " ".join(str(x) for x in (record.get("visibleLabels") or [])),
+                    " ".join(str(x) for x in (record.get("sourceScenes") or [])),
+                    " ".join(str(x) for x in (record.get("hierarchyPaths") or [])),
+                ]
+            )
         return [a for a in aliases if a]
+
+    def level_for_area(self, area: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(area, dict):
+            return None
+        scene_path = str(area.get("sceneAssetPath", "")).strip().lower()
+        if scene_path and scene_path in self._level_by_scene_path:
+            return self._level_by_scene_path[scene_path]
+        scene_name = str(area.get("sceneName", "") or area.get("areaKey", "")).strip().lower()
+        if scene_name and scene_name in self._level_by_scene_name:
+            return self._level_by_scene_name[scene_name]
+        return None
+
+    def area_for_level(self, level: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(level, dict):
+            return None
+        scene_path = str(level.get("sceneAssetPath", "")).strip().lower()
+        if scene_path and scene_path in self._area_by_scene_path:
+            return self._area_by_scene_path[scene_path]
+        scene_name = str(level.get("sceneName", "")).strip().lower()
+        if scene_name and scene_name in self._area_by_scene_name:
+            return self._area_by_scene_name[scene_name]
+        return None
+
+    def area_for_weather(self, weather: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(weather, dict):
+            return None
+        key = str(weather.get("areaKey", "")).strip().lower()
+        if key and key in self._area_by_key:
+            return self._area_by_key[key]
+        scene_path = str(weather.get("sceneAssetPath", "")).strip().lower()
+        if scene_path and scene_path in self._area_by_scene_path:
+            return self._area_by_scene_path[scene_path]
+        scene_name = str(weather.get("sceneName", "")).strip().lower()
+        if scene_name and scene_name in self._area_by_scene_name:
+            return self._area_by_scene_name[scene_name]
+        return None
+
+    def weather_for_area(self, area: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(area, dict):
+            return None
+        key = str(area.get("areaKey", "")).strip().lower()
+        if key and key in self._weather_by_area_key:
+            return self._weather_by_area_key[key]
+        scene_name = str(area.get("sceneName", "")).strip().lower()
+        if scene_name and scene_name in self._weather_by_scene_name:
+            return self._weather_by_scene_name[scene_name]
+        return None
+
+    def ui_by_key(self, ui_key: str) -> Optional[Dict[str, Any]]:
+        return self._ui_by_key.get(str(ui_key or "").strip().lower())
+
+    def publication_context(self, kind: str, record: Dict[str, Any]) -> Dict[str, Any]:
+        """Return related data that materially changes a published embed."""
+        if kind == "level":
+            area = self.area_for_level(record)
+            weather = self.weather_for_area(area) if area else None
+            return {"area": area, "weather": weather}
+        return {}
+
+    def _is_public_scene_name(self, scene_name: str) -> bool:
+        level = self._level_by_scene_name.get(str(scene_name or "").strip().lower())
+        return level is not None and self.is_public("level", level)
+
+    def _ui_public_name(self, record: Dict[str, Any]) -> str:
+        raw = str(record.get("name", "") or "").strip()
+        compact = re.sub(r"[^A-Fa-f0-9]", "", raw)
+        looks_generated = len(compact) >= 20 and len(compact) >= int(len(raw.replace(" ", "")) * 0.65)
+        generic = self.friendly_label(raw).lower() in {"", "icon", "image", "sprite", "background", "bg"}
+        if not looks_generated and not generic:
+            return raw
+
+        for path in record.get("hierarchyPaths") or []:
+            parts = [p.strip() for p in str(path).split("/") if p.strip()]
+            if not parts:
+                continue
+            candidate = parts[-1]
+            if self.friendly_label(candidate).lower() in {"icon", "image", "sprite", "background", "bg"} and len(parts) > 1:
+                candidate = parts[-2]
+            if candidate:
+                return candidate
+
+        category = str(record.get("category", "")).strip()
+        return category or raw
 
     def public_entities(self, scope: str = "all") -> List[tuple[str, Dict[str, Any]]]:
         scope = (scope or "all").lower()
@@ -753,6 +993,15 @@ class KnowledgeStore:
                 return recipe
         return None
 
+    def _read_optional_array(self, file_name: str) -> List[Dict[str, Any]]:
+        path = self.knowledge_dir / file_name
+        if not path.is_file():
+            return []
+        value = self._read_json(file_name)
+        if not isinstance(value, list):
+            raise RuntimeError(f"{file_name} must contain a JSON array.")
+        return value
+
     def _read_json(self, file_name: str) -> Any:
         path = self.knowledge_dir / file_name
         with path.open("r", encoding="utf-8") as f:
@@ -774,6 +1023,48 @@ class KnowledgeStore:
             for item in self.items
             if self.friendly_label(item.get("name"))
         }
+
+        self._level_by_scene_name = {
+            str(level.get("sceneName", "")).strip().lower(): level
+            for level in self.levels
+            if str(level.get("sceneName", "")).strip()
+        }
+        self._level_by_scene_path = {
+            str(level.get("sceneAssetPath", "")).strip().lower(): level
+            for level in self.levels
+            if str(level.get("sceneAssetPath", "")).strip()
+        }
+        self._area_by_key = {
+            str(area.get("areaKey", "")).strip().lower(): area
+            for area in self.areas
+            if str(area.get("areaKey", "")).strip()
+        }
+        self._area_by_scene_name = {
+            str(area.get("sceneName", "")).strip().lower(): area
+            for area in self.areas
+            if str(area.get("sceneName", "")).strip()
+        }
+        self._area_by_scene_path = {
+            str(area.get("sceneAssetPath", "")).strip().lower(): area
+            for area in self.areas
+            if str(area.get("sceneAssetPath", "")).strip()
+        }
+        self._weather_by_area_key = {
+            str(profile.get("areaKey", "")).strip().lower(): profile
+            for profile in self.weather
+            if str(profile.get("areaKey", "")).strip()
+        }
+        self._weather_by_scene_name = {
+            str(profile.get("sceneName", "")).strip().lower(): profile
+            for profile in self.weather
+            if str(profile.get("sceneName", "")).strip()
+        }
+        self._ui_by_key = {
+            str(record.get("uiKey", "")).strip().lower(): record
+            for record in self.ui
+            if str(record.get("uiKey", "")).strip()
+        }
+
         self._indexes = {
             "item": list(self.items),
             "recipe": list(self.recipes),
@@ -783,12 +1074,21 @@ class KnowledgeStore:
             "fishing": list(self.fishing.get("loot", [])),
             "document": list(self.documents),
             "level": list(self.levels),
+            "area": list(self.areas),
+            "weather": list(self.weather),
+            "ui": list(self.ui),
         }
 
     def _candidate_kinds(self, kind: str) -> Sequence[str]:
         normalized = self._normalize_kind(kind)
         if normalized == "all":
-            return ("item", "recipe", "building", "crop", "bait", "fishing", "document", "level")
+            # Area replaces the duplicate LevelDefinition entry in global search;
+            # level remains available internally for publication/back-compat.
+            base = ("item", "recipe", "building", "crop", "bait", "fishing", "document")
+            world = ("area", "weather", "ui") if self.areas or self.weather or self.ui else ("level",)
+            return base + world
+        if normalized == "area" and not self.areas:
+            return ("level",)
         return (normalized,)
 
     @staticmethod
@@ -810,13 +1110,23 @@ class KnowledgeStore:
             "fish": "fishing",
             "documents": "document",
             "codex": "document",
-            "maps": "level",
-            "map": "level",
+            "maps": "area",
+            "map": "area",
+            "areas": "area",
             "levels": "level",
+            "storms": "weather",
+            "storm": "weather",
+            "environment": "weather",
+            "hud": "ui",
+            "interface": "ui",
+            "icons": "ui",
+            "icon": "ui",
         }
-        return mapping.get(kind, kind if kind in {
-            "all", "item", "recipe", "building", "crop", "bait", "fishing", "document", "level"
-        } else "all")
+        allowed = {
+            "all", "item", "recipe", "building", "crop", "bait", "fishing",
+            "document", "level", "area", "weather", "ui"
+        }
+        return mapping.get(kind, kind if kind in allowed else "all")
 
     @staticmethod
     def _score(query: str, candidate: str) -> float:

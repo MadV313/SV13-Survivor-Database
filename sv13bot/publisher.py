@@ -89,6 +89,7 @@ class KnowledgePublisher:
                 payload = {
                     "kind": kind,
                     "record": record,
+                    "context": self.store.publication_context(kind, record),
                     "tags": tag_names,
                     "mediaFile": media_file_name,
                     "mediaHash": media_hash,
