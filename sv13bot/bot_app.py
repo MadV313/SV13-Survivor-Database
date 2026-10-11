@@ -105,7 +105,7 @@ class SV13Bot(commands.Bot):
 
         changed, changed_files = await asyncio.to_thread(
             self.knowledge.reload_if_changed,
-            force or source_changed,
+            source_changed,
         )
 
         combined = sorted(set(source_files) | set(changed_files))

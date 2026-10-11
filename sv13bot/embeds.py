@@ -398,29 +398,45 @@ def search_results_embed(query: str, hits: List[SearchHit]) -> discord.Embed:
 
 
 def status_embed(store: KnowledgeStore) -> discord.Embed:
-    counts = store.counts()
+    raw = store.counts()
+    public = store.public_counts()
     embed = base_embed("📡 SV13 // KNOWLEDGE UPLINK STATUS")
     embed.add_field(
         name="Package",
         value=store.package_version or "Unknown",
         inline=False,
     )
-    embed.add_field(name="Items", value=str(counts["items"]), inline=True)
-    embed.add_field(name="Recipes", value=str(counts["recipes"]), inline=True)
-    embed.add_field(name="Buildables", value=str(counts["buildables"]), inline=True)
-    embed.add_field(name="Crops", value=str(counts["crops"]), inline=True)
-    embed.add_field(name="Documents", value=str(counts["documents"]), inline=True)
-    embed.add_field(name="Maps / Levels", value=str(counts["levels"]), inline=True)
+    embed.add_field(
+        name="Raw Unity Package",
+        value=(
+            f"{raw['items']} items • {raw['recipes']} recipes • "
+            f"{raw['buildables']} buildables\n"
+            f"{raw['crops']} crops • {raw['documents']} documents • "
+            f"{raw['levels']} maps / levels"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Public Database",
+        value=(
+            f"{public['items']} items • {public['recipes']} recipes • "
+            f"{public['buildables']} buildables\n"
+            f"{public['crops']} crops • {public['documents']} documents • "
+            f"{public['levels']} maps / levels"
+        ),
+        inline=False,
+    )
     embed.add_field(
         name="Validation",
-        value=f"Warnings: {counts['validationWarnings']} • Errors: {counts['validationErrors']}",
+        value=f"Warnings: {raw['validationWarnings']} • Errors: {raw['validationErrors']}",
         inline=False,
     )
     return embed
 
 
 def sync_embed(store: KnowledgeStore, changed_files: List[str]) -> discord.Embed:
-    counts = store.counts()
+    raw = store.counts()
+    public = store.public_counts()
     embed = base_embed(
         "📡 INTEL UPLINK // KNOWLEDGE PACKAGE UPDATED",
         color=AMBER,
@@ -432,20 +448,28 @@ def sync_embed(store: KnowledgeStore, changed_files: List[str]) -> discord.Embed
     )
     embed.add_field(
         name="Changed Data",
-        value=_clip(", ".join(changed_files) if changed_files else "Forced reload"),
+        value=_clip(", ".join(changed_files) if changed_files else "Package metadata/version"),
         inline=False,
     )
     embed.add_field(
-        name="Database",
+        name="Public Database",
         value=(
-            f"{counts['items']} items • {counts['recipes']} recipes • "
-            f"{counts['buildables']} buildables • {counts['crops']} crops"
+            f"{public['items']} items • {public['recipes']} recipes • "
+            f"{public['buildables']} buildables • {public['crops']} crops"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Raw Unity Package",
+        value=(
+            f"{raw['items']} items • {raw['recipes']} recipes • "
+            f"{raw['buildables']} buildables • {raw['crops']} crops"
         ),
         inline=False,
     )
     embed.add_field(
         name="Audit",
-        value=f"{counts['validationWarnings']} warnings • {counts['validationErrors']} errors",
+        value=f"{raw['validationWarnings']} warnings • {raw['validationErrors']} errors",
         inline=False,
     )
     return embed

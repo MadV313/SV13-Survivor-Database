@@ -67,8 +67,7 @@ class KnowledgeSource:
                 cached_manifest = {}
 
         cached_fingerprint = self._fingerprint(cached_manifest) if cached_manifest else ""
-        if not force and remote_fingerprint == cached_fingerprint:
-            return False, []
+        source_changed = remote_fingerprint != cached_fingerprint
 
         remote_hashes = self._hash_map(remote_manifest)
         cached_hashes = self._hash_map(cached_manifest)
@@ -78,8 +77,14 @@ class KnowledgeSource:
             if remote_hashes.get(name) != cached_hashes.get(name)
         )
 
+        if not source_changed and not force:
+            return False, []
+
+        # A forced refresh re-downloads and verifies the package, but it is not
+        # reported as a content change unless the remote manifest fingerprint
+        # actually differs from the cached package.
         self._download_package_atomically(remote_manifest)
-        return True, changed_files
+        return source_changed, changed_files if source_changed else []
 
     def _download_package_atomically(self, manifest: Dict[str, Any]) -> None:
         parent = self.cache_dir.parent
@@ -168,7 +173,7 @@ class KnowledgeSource:
         req = Request(
             url,
             headers={
-                "User-Agent": "SV13-Survivor-Database/0.1.1",
+                "User-Agent": "SV13-Survivor-Database/0.2.1",
                 "Accept": "application/json,text/plain,*/*",
                 "Cache-Control": "no-cache",
             },

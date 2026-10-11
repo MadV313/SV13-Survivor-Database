@@ -265,6 +265,137 @@ class KnowledgeStore:
             "validationErrors": int(counts.get("validationErrors", 0)),
         }
 
+    def public_counts(self) -> Dict[str, int]:
+        return {
+            "items": sum(1 for r in self.items if self.is_public("item", r)),
+            "recipes": sum(1 for r in self.recipes if self.is_public("recipe", r)),
+            "buildables": sum(
+                1 for r in self.buildables if self.is_public("building", r)
+            ),
+            "crops": sum(1 for r in self.crops if self.is_public("crop", r)),
+            "documents": sum(
+                1 for r in self.documents if self.is_public("document", r)
+            ),
+            "levels": sum(1 for r in self.levels if self.is_public("level", r)),
+            "fishingBaits": sum(
+                1 for r in self.fishing.get("baits", []) if self.is_public("bait", r)
+            ),
+            "fishingLoot": sum(
+                1
+                for r in self.fishing.get("loot", [])
+                if self.is_public("fishing", r)
+            ),
+        }
+
+    def media_file_name_for(self, kind: str, record: Dict[str, Any]) -> str:
+        asset_path = self.media_asset_path_for(kind, record)
+        return self.media_index.get(asset_path, "")
+
+    def media_hash_for(self, kind: str, record: Dict[str, Any]) -> str:
+        file_name = self.media_file_name_for(kind, record)
+        return self._file_hashes.get(file_name, "") if file_name else ""
+
+    def forum_tag_names(self, kind: str, record: Dict[str, Any]) -> List[str]:
+        if kind == "item":
+            category = self.friendly_label(record.get("categoryName")).casefold()
+            if "firearm" in category or "attachment" in category:
+                return ["Firearms"]
+            if "magazine" in category:
+                return ["Magazines"]
+            if "ammo" in category or "spent shell" in category:
+                return ["Ammo"]
+            if "melee" in category:
+                return ["Melee"]
+            if "tool" in category:
+                return ["Tools"]
+            if "clothing" in category:
+                return ["Clothing"]
+            if any(token in category for token in ("helmet", "armor")):
+                return ["Armor"]
+            if "backpack" in category:
+                return ["Backpacks"]
+            if "food" in category:
+                return ["Food"]
+            if "heal" in category or "medical" in category:
+                return ["Medical"]
+            if "seed" in category:
+                return ["Seeds"]
+            if "bait" in category:
+                return ["Fishing"]
+            if "animal" in category:
+                return ["Animals"]
+            if "key" in category:
+                return ["Keys"]
+            if "quest" in category:
+                return ["Quest"]
+            if "currency" in category:
+                return ["Currency"]
+            if "explosive" in category or "throwable" in category:
+                return ["Throwables"]
+            return ["Resources"]
+
+        if kind == "recipe":
+            station = self.friendly_label(record.get("requiredStation")).casefold()
+            result_name = self.display_name("recipe", record).casefold()
+            if "ammo" in station or "reload" in station:
+                return ["Ammo Reloading"]
+            if "medical" in station or "med" in station:
+                return ["Medical"]
+            if "builder" in station or "construction" in station:
+                return ["Builder"]
+            if "workbench" in station or "work bench" in station:
+                return ["Workbench"]
+            if any(token in result_name for token in ("shirt", "jacket", "pants", "hat", "glove", "boot")):
+                return ["Clothing"]
+            if any(token in result_name for token in ("food", "meal", "stew", "cook")):
+                return ["Food"]
+            if any(token in result_name for token in ("rifle", "pistol", "shotgun", "smg", "carbine")):
+                return ["Weapons"]
+            if any(token in result_name for token in ("hammer", "shovel", "axe", "saw", "tool")):
+                return ["Tools"]
+            return ["General"]
+
+        if kind == "building":
+            context = self.building_context(record).casefold()
+            category = self.friendly_label(record.get("categoryName")).casefold()
+            name = self.display_name("building", record).casefold()
+
+            if "boren player cabin upgrade" in context:
+                return ["Cabin Upgrade"]
+            if "wall" in category:
+                return ["Walls"]
+            if "roof" in category:
+                return ["Roofs"]
+            if "platform" in category:
+                return ["Platforms"]
+            if "door" in category:
+                return ["Doors"]
+            if "stair" in category:
+                return ["Stairs"]
+            if "workstation" in category:
+                return ["Workstations"]
+            if "storage" in category:
+                return ["Storage"]
+            if "shelter" in category:
+                return ["Shelter"]
+            if "fire" in category or "campfire" in name:
+                return ["Fire"]
+            if "landmine" in name or "defen" in category:
+                return ["Defense"]
+            return ["Construction"]
+
+        if kind == "crop":
+            return ["Crops"]
+        if kind == "bait":
+            return ["Bait", "Fishing"]
+        if kind == "fishing":
+            return ["Fishing"]
+        if kind == "document":
+            return ["Codex"]
+        if kind == "level":
+            return ["Maps"]
+        return []
+
     def dataset(self, kind: str) -> List[Dict[str, Any]]:
         kind = kind.lower().strip()
         if kind in {"item", "items"}:

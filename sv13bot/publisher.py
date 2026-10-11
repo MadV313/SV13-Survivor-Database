@@ -18,6 +18,7 @@ from .embeds import (
     level_embed,
     recipe_embed,
 )
+from .forum_tags import resolve_tags
 from .knowledge import KnowledgeStore
 from .media import attach_record_thumbnail
 from .state import StateStore
@@ -45,6 +46,7 @@ class KnowledgePublisher:
         updated = 0
         unchanged = 0
         skipped = 0
+        forum_cache: Dict[str, discord.ForumChannel] = {}
 
         async with self._lock:
             for kind, record in self.store.public_entities(scope):
@@ -52,13 +54,45 @@ class KnowledgePublisher:
                     break
 
                 channel_key = self._channel_key(kind)
-                channel = await get_configured_channel(guild, self.state, channel_key)
-                if not isinstance(channel, discord.ForumChannel):
-                    skipped += 1
-                    continue
+                channel = forum_cache.get(channel_key)
+                if channel is None:
+                    configured = await get_configured_channel(
+                        guild, self.state, channel_key
+                    )
+                    if not isinstance(configured, discord.ForumChannel):
+                        skipped += 1
+                        continue
+
+                    # Fetch once per forum for the publication pass so freshly
+                    # reconciled available_tags are visible immediately even if
+                    # the gateway cache has not caught up yet.
+                    try:
+                        fetched = await guild.fetch_channel(configured.id)
+                        if isinstance(fetched, discord.ForumChannel):
+                            configured = fetched
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+
+                    channel = configured
+                    forum_cache[channel_key] = channel
 
                 entity_key = self.store.entity_key(kind, record)
-                payload = {"kind": kind, "record": record}
+                tag_names = self.store.forum_tag_names(kind, record)
+                applied_tags = resolve_tags(channel, tag_names)
+                media_file_name = self.store.media_file_name_for(kind, record)
+                media_hash = self.store.media_hash_for(kind, record)
+
+                # Tags and the resolved media hash are part of published content.
+                # This makes an existing forum post refresh when its classification
+                # changes or when Unity replaces a sprite without changing the
+                # underlying data record.
+                payload = {
+                    "kind": kind,
+                    "record": record,
+                    "tags": tag_names,
+                    "mediaFile": media_file_name,
+                    "mediaHash": media_hash,
+                }
                 content_hash = hashlib.sha256(
                     json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
                 ).hexdigest()
@@ -73,7 +107,7 @@ class KnowledgePublisher:
                 title = self._thread_title(kind, record)
 
                 if prior:
-                    ok = await self._update_existing(guild, prior, title, embed, media)
+                    ok = await self._update_existing(guild, prior, title, embed, media, applied_tags)
                     if ok:
                         self.state.upsert_published(
                             guild.id,
@@ -96,6 +130,8 @@ class KnowledgePublisher:
                 }
                 if media is not None:
                     create_kwargs["file"] = media
+                if applied_tags:
+                    create_kwargs["applied_tags"] = applied_tags
                 result = await channel.create_thread(**create_kwargs)
                 thread, message = self._unpack_thread_result(result)
                 if thread is None or message is None:
@@ -130,6 +166,7 @@ class KnowledgePublisher:
         title: str,
         embed: discord.Embed,
         media: Optional[discord.File] = None,
+        applied_tags: Optional[list[discord.ForumTag]] = None,
     ) -> bool:
         try:
             thread = guild.get_thread(int(prior["thread_id"]))
@@ -140,14 +177,30 @@ class KnowledgePublisher:
             if thread is None:
                 return False
 
+            desired_tags = applied_tags or []
+            edit_kwargs = {}
+            if thread.archived:
+                edit_kwargs["archived"] = False
             if thread.name != title[:100]:
-                await thread.edit(name=title[:100], reason="SV13 knowledge refresh")
+                edit_kwargs["name"] = title[:100]
+            if {tag.id for tag in thread.applied_tags} != {
+                tag.id for tag in desired_tags
+            }:
+                edit_kwargs["applied_tags"] = desired_tags
+
+            if edit_kwargs:
+                thread = await thread.edit(
+                    **edit_kwargs,
+                    reason="SV13 knowledge refresh",
+                )
 
             message = await thread.fetch_message(int(prior["message_id"]))
             if media is not None:
                 await message.edit(embed=embed, attachments=[media])
             else:
-                await message.edit(embed=embed)
+                # These are bot-managed starter messages; clear a stale image if
+                # a record no longer resolves to valid media.
+                await message.edit(embed=embed, attachments=[])
             return True
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
             return False

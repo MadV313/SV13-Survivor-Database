@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Dict, Optional, Type, TypeVar, Tuple
+from typing import Dict, Optional, Sequence, Type, TypeVar, Tuple
 
 import discord
 
 from .config import BotConfig
 from .embeds import base_embed
+from .forum_tags import ensure_managed_forum_tags, resolve_tags
 from .state import StateStore
 
 
@@ -99,6 +100,12 @@ async def ensure_discord_structure(
         state,
     )
 
+    # Reconcile bot-managed forum tags without deleting any owner-created tags.
+    items = await ensure_managed_forum_tags(items, "items")
+    crafting = await ensure_managed_forum_tags(crafting, "crafting")
+    building = await ensure_managed_forum_tags(building, "building")
+    field = await ensure_managed_forum_tags(field, "field")
+
     channels = {
         "terminal": terminal,
         "intel": intel,
@@ -132,6 +139,7 @@ async def ensure_discord_structure(
             "Bot-managed item reference posts live here. "
             "For a private lookup anywhere in the server, use `/item` and start typing a name.",
         ),
+        tag_names=("Start Here",),
     )
     await _ensure_forum_intro(
         guild,
@@ -144,6 +152,7 @@ async def ensure_discord_structure(
             "Recipes published here come from the current SV13 knowledge package. "
             "Use `/recipe` and start typing to browse current choices privately.",
         ),
+        tag_names=("Start Here",),
     )
     await _ensure_forum_intro(
         guild,
@@ -156,6 +165,7 @@ async def ensure_discord_structure(
             "Build requirements, assembly information and Player Cabin upgrades are indexed here. "
             "Use `/building` and start typing for a private lookup.",
         ),
+        tag_names=("Start Here",),
     )
     await _ensure_forum_intro(
         guild,
@@ -168,6 +178,7 @@ async def ensure_discord_structure(
             "Farming, fishing, area intel and recovered documents are collected here. "
             "Use `/crop`, `/fishing`, `/map` or `/codex` and start typing to browse.",
         ),
+        tag_names=("Start Here",),
     )
 
     return channels
@@ -248,9 +259,11 @@ async def _ensure_forum_intro(
     key: str,
     title: str,
     embed: discord.Embed,
+    tag_names: Sequence[str] = (),
 ) -> None:
     thread_meta = f"{key}_intro_thread_id"
     message_meta = f"{key}_intro_message_id"
+    desired_tags = resolve_tags(forum, tag_names)
 
     thread_id = state.get_meta(guild.id, thread_meta)
     message_id = state.get_meta(guild.id, message_meta)
@@ -262,6 +275,19 @@ async def _ensure_forum_intro(
                 fetched = await guild.fetch_channel(int(thread_id))
                 thread = fetched if isinstance(fetched, discord.Thread) else None
             if thread is not None:
+                edit_kwargs = {}
+                if thread.archived:
+                    edit_kwargs["archived"] = False
+                if {tag.id for tag in thread.applied_tags} != {
+                    tag.id for tag in desired_tags
+                }:
+                    edit_kwargs["applied_tags"] = desired_tags
+                if edit_kwargs:
+                    thread = await thread.edit(
+                        **edit_kwargs,
+                        reason="SV13 Survivor Database forum guide repair",
+                    )
+
                 message = await thread.fetch_message(int(message_id))
                 await message.edit(embed=embed)
                 if not message.pinned:
@@ -270,11 +296,15 @@ async def _ensure_forum_intro(
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
             pass
 
-    result = await forum.create_thread(
-        name=title[:100],
-        embed=embed,
-        reason="SV13 Survivor Database forum guide",
-    )
+    create_kwargs = {
+        "name": title[:100],
+        "embed": embed,
+        "reason": "SV13 Survivor Database forum guide",
+    }
+    if desired_tags:
+        create_kwargs["applied_tags"] = desired_tags
+
+    result = await forum.create_thread(**create_kwargs)
     thread, message = _unpack_forum_thread(result)
     if thread is None or message is None:
         return
