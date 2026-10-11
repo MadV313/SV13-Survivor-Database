@@ -7,7 +7,6 @@ from discord import app_commands
 from discord.ext import commands
 
 from ..discord_setup import ensure_discord_structure
-from ..embeds import sync_embed
 
 
 PublishScope = Literal["all", "items", "recipes", "buildings", "field"]
@@ -66,14 +65,24 @@ class AdminCommands(commands.Cog):
             )
             return
 
-        if interaction.guild is not None:
+        if changed and interaction.guild is not None:
             await self.bot.post_sync_update(interaction.guild, changed_files)
 
-        await interaction.followup.send(
-            f"Loaded package `{self.bot.knowledge.package_version}`. "
-            f"Changed/forced datasets: {', '.join(changed_files) if changed_files else 'none detected'}.",
-            ephemeral=True,
-        )
+        if changed:
+            detail = ", ".join(changed_files) if changed_files else "package metadata/version"
+            message = (
+                f"Loaded package `{self.bot.knowledge.package_version}`. "
+                f"Changed datasets: {detail}. "
+                "A public intel-update notice was posted."
+            )
+        else:
+            message = (
+                f"Verified package `{self.bot.knowledge.package_version}`. "
+                "No knowledge changes were detected, so no public intel-update "
+                "notice was posted."
+            )
+
+        await interaction.followup.send(message, ephemeral=True)
 
     @app_commands.command(name="sv13publish", description="Publish/update Unity-backed guide posts.")
     @app_commands.default_permissions(manage_guild=True)
