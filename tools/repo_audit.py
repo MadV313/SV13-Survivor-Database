@@ -21,6 +21,7 @@ REQUIRED = [
     "sv13bot/knowledge_source.py",
     "sv13bot/state.py",
     "sv13bot/discord_setup.py",
+    "sv13bot/forum_tags.py",
     "sv13bot/publisher.py",
     "sv13bot/embeds.py",
     "sv13bot/cogs/public.py",
