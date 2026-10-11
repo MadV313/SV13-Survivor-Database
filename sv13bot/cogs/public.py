@@ -15,8 +15,14 @@ from ..embeds import (
 from ..media import attach_record_thumbnail
 
 
-SearchType = Literal["all", "item", "recipe", "building", "crop", "fishing", "document", "level"]
-GuideTopic = Literal["search", "crafting", "building", "farming", "fishing", "maps", "codex"]
+SearchType = Literal[
+    "all", "item", "recipe", "building", "crop", "fishing", "document",
+    "map", "weather", "ui"
+]
+GuideTopic = Literal[
+    "search", "crafting", "building", "farming", "fishing", "maps",
+    "weather", "interface", "codex"
+]
 
 
 class PublicCommands(commands.Cog):
@@ -110,11 +116,29 @@ class PublicCommands(commands.Cog):
     @app_commands.command(name="map", description="Look up SV13 area/map intel.")
     @app_commands.describe(name="Start typing to choose from current areas.")
     async def map_command(self, interaction: discord.Interaction, name: str):
-        await self._lookup(interaction, name, "level")
+        await self._lookup(interaction, name, "area")
 
     @map_command.autocomplete("name")
     async def map_autocomplete(self, interaction: discord.Interaction, current: str):
-        return self._choices(current, "level")
+        return self._choices(current, "area")
+
+    @app_commands.command(name="weather", description="Explain SV13 weather and survival effects for an area.")
+    @app_commands.describe(name="Start typing an area with captured weather intelligence.")
+    async def weather(self, interaction: discord.Interaction, name: str):
+        await self._lookup(interaction, name, "weather")
+
+    @weather.autocomplete("name")
+    async def weather_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self._choices(current, "weather")
+
+    @app_commands.command(name="ui", description="Explain an SV13 HUD/UI icon, indicator, or control.")
+    @app_commands.describe(name="Start typing an icon, status, HUD element, or skill/perk control.")
+    async def ui(self, interaction: discord.Interaction, name: str):
+        await self._lookup(interaction, name, "ui")
+
+    @ui.autocomplete("name")
+    async def ui_autocomplete(self, interaction: discord.Interaction, current: str):
+        return self._choices(current, "ui")
 
     @app_commands.command(name="codex", description="Search recovered SV13 documents/lore.")
     @app_commands.describe(name="Start typing to choose from recovered documents.")
