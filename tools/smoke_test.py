@@ -33,6 +33,9 @@ def main() -> int:
         ("building search", store.best("GreenHouse", "building", include_review=True)),
         ("crop search", store.best("Cabbage", "crop", include_review=True)),
         ("document search", store.best("Didn't Mean to Stay", "document", include_review=True)),
+        ("area search", store.best("Player Cabin", "area", include_review=True)),
+        ("weather search", store.best("Player Cabin", "weather", include_review=True)),
+        ("ui search", store.best("Health", "ui", include_review=True)),
     ]
 
     failed = False
