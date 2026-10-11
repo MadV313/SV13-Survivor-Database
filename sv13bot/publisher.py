@@ -20,7 +20,7 @@ from .embeds import (
 )
 from .forum_tags import resolve_tags
 from .knowledge import KnowledgeStore
-from .media import attach_record_thumbnail
+from .media import attach_record_thumbnail, requirement_media
 from .state import StateStore
 
 
@@ -82,6 +82,8 @@ class KnowledgePublisher:
                 media_file_name = self.store.media_file_name_for(kind, record)
                 media_hash = self.store.media_hash_for(kind, record)
 
+                requirement_embeds, requirement_files, requirement_signature = requirement_media(self.store, kind, record)
+
                 # Tags and the resolved media hash are part of published content.
                 # This makes an existing forum post refresh when its classification
                 # changes or when Unity replaces a sprite without changing the
@@ -93,6 +95,8 @@ class KnowledgePublisher:
                     "tags": tag_names,
                     "mediaFile": media_file_name,
                     "mediaHash": media_hash,
+                    "requirementMedia": requirement_signature,
+                    "publisherMediaVersion": 2,
                 }
                 content_hash = hashlib.sha256(
                     json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -106,9 +110,11 @@ class KnowledgePublisher:
                 embed = self._embed(kind, record)
                 media = attach_record_thumbnail(embed, self.store, kind, record)
                 title = self._thread_title(kind, record)
+                all_embeds = [embed, *requirement_embeds]
+                all_files = ([media] if media else []) + requirement_files
 
                 if prior:
-                    ok = await self._update_existing(guild, prior, title, embed, media, applied_tags)
+                    ok = await self._update_existing(guild, prior, title, all_embeds, all_files, applied_tags)
                     if ok:
                         self.state.upsert_published(
                             guild.id,
@@ -126,11 +132,11 @@ class KnowledgePublisher:
 
                 create_kwargs = {
                     "name": title[:100],
-                    "embed": embed,
+                    "embeds": all_embeds,
                     "reason": "SV13 knowledge publisher",
                 }
-                if media is not None:
-                    create_kwargs["file"] = media
+                if all_files:
+                    create_kwargs["files"] = all_files
                 if applied_tags:
                     create_kwargs["applied_tags"] = applied_tags
                 result = await channel.create_thread(**create_kwargs)
@@ -165,8 +171,8 @@ class KnowledgePublisher:
         guild: discord.Guild,
         prior: Dict[str, Any],
         title: str,
-        embed: discord.Embed,
-        media: Optional[discord.File] = None,
+        embeds: list[discord.Embed],
+        media_files: Optional[list[discord.File]] = None,
         applied_tags: Optional[list[discord.ForumTag]] = None,
     ) -> bool:
         try:
@@ -196,12 +202,9 @@ class KnowledgePublisher:
                 )
 
             message = await thread.fetch_message(int(prior["message_id"]))
-            if media is not None:
-                await message.edit(embed=embed, attachments=[media])
-            else:
-                # These are bot-managed starter messages; clear a stale image if
-                # a record no longer resolves to valid media.
-                await message.edit(embed=embed, attachments=[])
+            # Replace bot-managed image attachments while updating the same
+            # starter message; no duplicate threads or follow-up spam.
+            await message.edit(embeds=embeds, attachments=media_files or [])
             return True
         except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
             return False
